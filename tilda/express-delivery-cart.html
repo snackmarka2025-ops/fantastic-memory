@@ -1,0 +1,111 @@
+<!-- SnackMarka: «Экспресс Яндекс Доставка» в корзине Tilda (T706).
+     Вставить в блок T123 «HTML-код» в общем хедере (рядом с остальными T123 корзины).
+     В EXPRESS_API укажите адрес развёрнутого сервиса express-delivery. -->
+<style>
+  .sm-express { margin: 20px 0; font-family: Montserrat, Arial, sans-serif; }
+  .sm-express__opt { display: flex; gap: 10px; align-items: center; cursor: pointer; font-size: 16px; color: #333; }
+  .sm-express__form { margin-top: 12px; display: none; }
+  .sm-express.is-open .sm-express__form { display: block; }
+  .sm-express__input { width: 100%; box-sizing: border-box; padding: 14px 18px; border: 1px solid #333;
+    border-radius: 30px; font: inherit; color: #333; background: transparent; }
+  .sm-express__btn { margin-top: 10px; width: 100%; padding: 14px; border: 1px solid #9ce4e4;
+    border-radius: 30px; background: transparent; font: inherit; font-weight: 600; color: #333; cursor: pointer; }
+  .sm-express__btn:hover { background: rgba(156, 228, 228, .3); }
+  .sm-express__btn[disabled] { opacity: .5; cursor: default; }
+  .sm-express__msg { margin-top: 10px; font-size: 14px; color: #333; }
+  .sm-express__msg.is-error { color: #e30707; }
+</style>
+<script>
+(function () {
+  var EXPRESS_API = 'https://YOUR-SERVER.example/api/express-price'; // <- заменить
+  var NAME = 'Экспресс Яндекс Доставка';
+  var SEL_BOX = '#customdelivery';
+
+  function $(s, r) { return (r || document).querySelector(s); }
+
+  // Остальные способы доставки Tilda: при их выборе экспресс сбрасываем
+  function resetExpress() {
+    var wrap = $('.sm-express');
+    if (wrap) wrap.classList.remove('is-open');
+    var radio = $('.sm-express__radio');
+    if (radio) radio.checked = false;
+    var h = $('input[name="delivery_type"]');
+    if (h && h.value === NAME) { h.value = ''; }
+  }
+
+  function applyPrice(price, address) {
+    window.tcart = window.tcart || {};
+    window.tcart.delivery = { name: NAME, price: price, address: address };
+    var p = $('input[name="delivery_price"]'); if (p) p.value = price;
+    var t = $('input[name="delivery_type"]'); if (t) t.value = NAME;
+    // Снимаем блокировку «доставка не выбрана»
+    var bad = $('input[name="delivery-badresponse-comment"]'); if (bad) bad.value = '';
+    // Адрес уходит в заказ (МойСклад) отдельным полем формы
+    var a = $('input[name="express_address"]');
+    if (!a) {
+      a = document.createElement('input'); a.type = 'hidden'; a.name = 'express_address';
+      var f = $('.t706 form'); if (f) f.appendChild(a);
+    }
+    a.value = address;
+    try {
+      if (typeof tcart__saveLocalObj === 'function') tcart__saveLocalObj();
+      if (typeof tcart__reDrawTotal === 'function') tcart__reDrawTotal();
+    } catch (e) { console.error(e); }
+  }
+
+  function weightKg() {
+    // Вес берём из корзины, если у товаров задан; иначе сервис возьмёт DEFAULT_WEIGHT_KG
+    var items = (window.tcart && window.tcart.products) || [];
+    var w = 0;
+    items.forEach(function (it) { w += (parseFloat(it.weight) || 0) * (parseInt(it.quantity, 10) || 1) / 1000; });
+    return w > 0 ? w : undefined;
+  }
+
+  function build() {
+    var box = $(SEL_BOX);
+    if (!box || $('.sm-express', box.parentNode)) return;
+
+    var wrap = document.createElement('div');
+    wrap.className = 'sm-express';
+    wrap.innerHTML =
+      '<label class="sm-express__opt"><input type="radio" class="sm-express__radio" name="sm-delivery-choice"> ' +
+      NAME + '</label>' +
+      '<div class="sm-express__form">' +
+        '<input class="sm-express__input" type="text" placeholder="Город, улица, дом, квартира" autocomplete="street-address">' +
+        '<button type="button" class="sm-express__btn">Рассчитать стоимость</button>' +
+        '<div class="sm-express__msg" aria-live="polite"></div>' +
+      '</div>';
+    box.parentNode.insertBefore(wrap, box.nextSibling);
+
+    var radio = $('.sm-express__radio', wrap), btn = $('.sm-express__btn', wrap),
+        input = $('.sm-express__input', wrap), msg = $('.sm-express__msg', wrap);
+
+    radio.addEventListener('change', function () { wrap.classList.add('is-open'); input.focus(); });
+
+    // Выбор любого другого способа Tilda закрывает экспресс
+    box.addEventListener('change', resetExpress);
+
+    btn.addEventListener('click', function () {
+      var address = input.value.trim();
+      msg.className = 'sm-express__msg';
+      if (address.length < 8) { msg.textContent = 'Введите полный адрес доставки'; msg.classList.add('is-error'); return; }
+      btn.disabled = true; msg.textContent = 'Считаем стоимость…';
+      fetch(EXPRESS_API, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: address, weightKg: weightKg() })
+      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res) {
+          if (!res.ok) throw new Error(res.j.error || 'Ошибка расчёта');
+          applyPrice(res.j.price, address);
+          msg.textContent = 'Стоимость доставки: ' + res.j.price + ' р.';
+        })
+        .catch(function (e) { msg.textContent = e.message; msg.classList.add('is-error'); })
+        .then(function () { btn.disabled = false; });
+    });
+  }
+
+  // Tilda перерисовывает корзину при открытии/изменении, поэтому следим за DOM
+  new MutationObserver(build).observe(document.body, { childList: true, subtree: true });
+  document.addEventListener('DOMContentLoaded', build);
+})();
+</script>
